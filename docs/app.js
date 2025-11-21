@@ -77,20 +77,38 @@ document.addEventListener("DOMContentLoaded", () => {
   const colorChanging = document.getElementById("color-changing");
   const canvas = document.getElementById("canvas");
   const audioCtx = new (window.AudioContext || window.webkitAudioContext)();
-  const beepSource = audioCtx.createMediaElementSource(beepSound);
   const panner = audioCtx.createStereoPanner();
-
-  beepSource.connect(panner).connect(audioCtx.destination);
-
+  let audioUnlocked = false;
+  let beepBuffer = null;
+  
+  fetch("beep.mp3")
+    .then(r => r.arrayBuffer())
+    .then(arrayBuffer => audioCtx.decodeAudioData(arrayBuffer))
+    .then(decoded => beepBuffer = decoded);
+  
+  function unlockAudio() {
+    if (audioUnlocked) return;
+    audioUnlocked = true;
+    const source = audioCtx.createBufferSource();
+    source.buffer = audioCtx.createBuffer(1, 1, 22050);
+    source.connect(audioCtx.destination);
+    source.start(0);
+  }
+  
   let beepSide = 1;
-
   function beepStereo() {
+    if (!audioUnlocked) return unlockAudio();
+  
+    if (!beepBuffer) return; 
+  
     beepSide *= -1;
-
+  
+    const source = audioCtx.createBufferSource();
+    source.buffer = beepBuffer;
+    source.connect(panner).connect(audioCtx.destination);
     panner.pan.value = beepSide;
-
-    beepSound.currentTime = 0;
-    beepSound.play();
+  
+    source.start();
   }
 
   speed.setAttribute("step", speedProps.step);
@@ -254,8 +272,8 @@ document.addEventListener("DOMContentLoaded", () => {
     ball.position.y = cy + Math.sin(conf.angle) * r;
 
     const crossed =
-      (prevY < cy && ball.position.y >= cy) || 
-      (prevY > cy && ball.position.y <= cy); 
+      (prevY < cy && ball.position.y >= cy) ||
+      (prevY > cy && ball.position.y <= cy);
 
     if (crossed) {
       beepStereo();
@@ -290,7 +308,11 @@ document.addEventListener("DOMContentLoaded", () => {
     stopBtn.classList.add("hidden");
   }
 
-  startBtn.addEventListener("click", startAnimation);
+  startBtn.addEventListener("click", () => {
+    unlockAudio();
+    startAnimation();
+  });
+
   stopBtn.addEventListener("click", stopAnimation);
 
   speed.addEventListener("input", (e) => {
@@ -324,6 +346,7 @@ document.addEventListener("DOMContentLoaded", () => {
   });
 
   canvas.addEventListener("click", () => {
+    unlockAudio();
     if (conf.animation) stopAnimation();
     else startAnimation();
   });

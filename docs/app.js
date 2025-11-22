@@ -78,6 +78,8 @@ document.addEventListener("DOMContentLoaded", () => {
   const canvas = document.getElementById("canvas");
   let audioCtx = null;
   let audioUnlocked = false;
+  let beepBuffer = null;
+  let beepArrayBuffer = null;
   
   function getAudioContext() {
     if (!audioCtx) {
@@ -86,68 +88,58 @@ document.addEventListener("DOMContentLoaded", () => {
     return audioCtx;
   }
   
+  function ensureAudioContextReady() {
+    const ctx = getAudioContext();
+    if (ctx.state === 'suspended') {
+      return ctx.resume();
+    }
+    return Promise.resolve();
+  }
+  
+  function loadBeepBuffer() {
+    if (beepBuffer) return Promise.resolve(beepBuffer);
+    if (!beepArrayBuffer) return Promise.reject('Beep not loaded');
+    
+    const ctx = getAudioContext();
+    return ctx.decodeAudioData(beepArrayBuffer.slice(0)).then(decoded => {
+      beepBuffer = decoded;
+      return beepBuffer;
+    });
+  }
+  
+  fetch("beep.mp3")
+    .then(r => r.arrayBuffer())
+    .then(arrayBuffer => {
+      beepArrayBuffer = arrayBuffer;
+    })
+    .catch(() => {
+      fetch("beep.wav")
+        .then(r => r.arrayBuffer())
+        .then(arrayBuffer => {
+          beepArrayBuffer = arrayBuffer;
+        })
+        .catch(() => {});
+    });
+  
   function unlockAudio() {
     if (!audioUnlocked) {
       audioUnlocked = true;
       const ctx = getAudioContext();
       
-      if (ctx.state === 'suspended') {
-        ctx.resume();
-      }
-      
-      initAudioPool();
-      
-      beepSound.volume = 0.01;
-      beepSound.play().then(() => {
-        beepSound.pause();
-        beepSound.currentTime = 0;
-        beepSound.volume = 1.0;
-      }).catch(() => {});
+      ensureAudioContextReady().then(() => {
+        if (ctx.state === 'running') {
+          const source = ctx.createBufferSource();
+          source.buffer = ctx.createBuffer(1, 1, 22050);
+          source.connect(ctx.destination);
+          source.start(0);
+        }
+      });
     } else {
-      const ctx = getAudioContext();
-      if (ctx.state === 'suspended') {
-        ctx.resume();
-      }
+      ensureAudioContextReady();
     }
   }
   
   let beepSide = 1;
-  let audioPool = [];
-  const POOL_SIZE = 6;
-  
-  function createPreloadedAudio() {
-    const audio = document.createElement('audio');
-    const sources = beepSound.querySelectorAll('source');
-    sources.forEach(src => {
-      const newSrc = document.createElement('source');
-      newSrc.src = src.src;
-      newSrc.type = src.type;
-      audio.appendChild(newSrc);
-    });
-    audio.preload = 'auto';
-    audio.volume = 1.0;
-    audio.load();
-    return audio;
-  }
-  
-  function initAudioPool() {
-    for (let i = 0; i < POOL_SIZE; i++) {
-      audioPool.push(createPreloadedAudio());
-    }
-  }
-  
-  function getReadyAudio() {
-    for (let i = 0; i < audioPool.length; i++) {
-      const audio = audioPool[i];
-      if (audio.paused && (audio.readyState >= 2 || audio.readyState === 1)) {
-        return audio;
-      }
-    }
-    const newAudio = createPreloadedAudio();
-    audioPool.push(newAudio);
-    return newAudio;
-  }
-  
   function beepStereo() {
     if (!audioUnlocked) {
       unlockAudio();
@@ -155,64 +147,31 @@ document.addEventListener("DOMContentLoaded", () => {
       return;
     }
     
+    if (!beepArrayBuffer) {
+      setTimeout(() => beepStereo(), 100);
+      return;
+    }
+    
     const ctx = getAudioContext();
     
-    if (ctx.state === 'suspended') {
-      ctx.resume().then(() => {
-        playBeep();
-      }).catch(() => {
-        playBeep();
-      });
-    } else {
-      playBeep();
-    }
-    
-    function playBeep() {
-      beepSide *= -1;
-      
-      const audio = getReadyAudio();
-      
-      const tryPlay = () => {
-        if (audio.readyState === 0) {
-          audio.load();
-          setTimeout(() => tryPlay(), 50);
-          return;
-        }
+    ensureAudioContextReady().then(() => {
+      return loadBeepBuffer();
+    }).then(() => {
+      if (ctx.state === 'running' && beepBuffer) {
+        beepSide *= -1;
         
-        try {
-          const source = ctx.createMediaElementSource(audio);
-          const panner = ctx.createStereoPanner();
-          panner.pan.value = beepSide;
-          source.connect(panner);
-          panner.connect(ctx.destination);
-          
-          audio.addEventListener('ended', () => {
-            try {
-              source.disconnect();
-              panner.disconnect();
-            } catch (e) {}
-            audio.currentTime = 0;
-          }, { once: true });
-        } catch (e) {}
+        const source = ctx.createBufferSource();
+        source.buffer = beepBuffer;
         
-        audio.currentTime = 0;
-        const playPromise = audio.play();
-        if (playPromise !== undefined) {
-          playPromise.catch(() => {
-            audio.currentTime = 0;
-          });
-        }
-      };
-      
-      if (audio.readyState >= 2) {
-        tryPlay();
-      } else {
-        audio.addEventListener('canplaythrough', tryPlay, { once: true });
-        if (audio.readyState === 0) {
-          audio.load();
-        }
+        const panner = ctx.createStereoPanner();
+        panner.pan.value = beepSide;
+        
+        source.connect(panner);
+        panner.connect(ctx.destination);
+        
+        source.start(0);
       }
-    }
+    }).catch(() => {});
   }
   
   speed.setAttribute("step", speedProps.step);

@@ -76,38 +76,72 @@ document.addEventListener("DOMContentLoaded", () => {
   const aniMode = document.getElementById("animation-mode");
   const colorChanging = document.getElementById("color-changing");
   const canvas = document.getElementById("canvas");
-  const audioCtx = new (window.AudioContext || window.webkitAudioContext)();
-  const panner = audioCtx.createStereoPanner();
+  let audioCtx = null;
   let audioUnlocked = false;
   let beepBuffer = null;
   
+  function getAudioContext() {
+    if (!audioCtx) {
+      audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+    }
+    return audioCtx;
+  }
+  
   fetch("beep.mp3")
     .then(r => r.arrayBuffer())
-    .then(arrayBuffer => audioCtx.decodeAudioData(arrayBuffer))
+    .then(arrayBuffer => {
+      const ctx = getAudioContext();
+      return ctx.decodeAudioData(arrayBuffer);
+    })
     .then(decoded => beepBuffer = decoded);
   
   function unlockAudio() {
-    if (audioUnlocked) return;
-    audioUnlocked = true;
-    const source = audioCtx.createBufferSource();
-    source.buffer = audioCtx.createBuffer(1, 1, 22050);
-    source.connect(audioCtx.destination);
-    source.start(0);
+    const ctx = getAudioContext();
+    
+    if (!audioUnlocked) {
+      audioUnlocked = true;
+      const source = ctx.createBufferSource();
+      source.buffer = ctx.createBuffer(1, 1, 22050);
+      source.connect(ctx.destination);
+      source.start(0);
+    }
+    
+    if (ctx.state === 'suspended') {
+      ctx.resume();
+    }
   }
   
   let beepSide = 1;
   function beepStereo() {
-    if (!audioUnlocked) return unlockAudio();
+    if (!beepBuffer) return;
+
+    const ctx = getAudioContext();
+    
+    if (!audioUnlocked) {
+      unlockAudio();
+    }
+    
+    if (ctx.state === 'suspended') {
+      ctx.resume().then(() => {
+        playBeep(ctx);
+      });
+      return;
+    }
+
+    playBeep(ctx);
+  }
   
-    if (!beepBuffer) return; 
-  
+  function playBeep(ctx) {
     beepSide *= -1;
-  
-    const source = audioCtx.createBufferSource();
-    source.buffer = beepBuffer;
-    source.connect(panner).connect(audioCtx.destination);
+
+    const panner = ctx.createStereoPanner();
     panner.pan.value = beepSide;
-  
+
+    const source = ctx.createBufferSource();
+    source.buffer = beepBuffer;
+    source.connect(panner);
+    panner.connect(ctx.destination);
+
     source.start();
   }
 
@@ -304,6 +338,9 @@ document.addEventListener("DOMContentLoaded", () => {
     conf.animation = null;
     ball.position = getStartPosition();
     conf.targetX = ball.position.x;
+    if (conf.timeEnabled) {
+      conf.time = timeProps.defaultOn;
+    }
     startBtn.classList.remove("hidden");
     stopBtn.classList.add("hidden");
   }

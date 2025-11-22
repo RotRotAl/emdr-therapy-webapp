@@ -86,6 +86,9 @@ document.addEventListener("DOMContentLoaded", () => {
     
     try {
       audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+      if (audioCtx.state === 'suspended') {
+        audioCtx.resume();
+      }
       mediaSource = audioCtx.createMediaElementSource(beepSound);
       panner = audioCtx.createStereoPanner();
       mediaSource.connect(panner);
@@ -96,12 +99,16 @@ document.addEventListener("DOMContentLoaded", () => {
     }
   }
   
+  function unlockAudio() {
+    setupStereoAudio();
+    beepSound.play().then(() => {
+      beepSound.pause();
+      beepSound.currentTime = 0;
+    }).catch(() => {});
+  }
+  
   let beepSide = 1;
   function beepStereo() {
-    if (!audioSetup) {
-      setupStereoAudio();
-    }
-    
     if (audioCtx && audioCtx.state === 'suspended') {
       audioCtx.resume();
     }

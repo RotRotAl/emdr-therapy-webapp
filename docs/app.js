@@ -80,52 +80,20 @@ document.addEventListener("DOMContentLoaded", () => {
   let audioUnlocked = false;
   let beepBuffer = null;
   let beepArrayBuffer = null;
-  let keepAliveOscillator = null;
-  let keepAliveGain = null;
   
   function getAudioContext() {
     if (!audioCtx) {
       audioCtx = new (window.AudioContext || window.webkitAudioContext)();
-      
-      audioCtx.addEventListener('statechange', () => {
-        if (audioCtx.state === 'suspended' && audioUnlocked) {
-          audioCtx.resume().then(() => {
-            if (!keepAliveOscillator) {
-              startKeepAlive();
-            }
-          });
-        }
-      });
     }
     return audioCtx;
-  }
-  
-  function startKeepAlive() {
-    if (keepAliveOscillator) return;
-    
-    const ctx = getAudioContext();
-    
-    keepAliveGain = ctx.createGain();
-    keepAliveGain.gain.value = 0.00001;
-    keepAliveGain.connect(ctx.destination);
-    
-    keepAliveOscillator = ctx.createOscillator();
-    keepAliveOscillator.frequency.value = 1;
-    keepAliveOscillator.type = 'sine';
-    keepAliveOscillator.connect(keepAliveGain);
-    keepAliveOscillator.start(0);
   }
   
   function ensureAudioContextReady() {
     const ctx = getAudioContext();
     if (ctx.state === 'suspended') {
-      return ctx.resume().then(() => {
-        startKeepAlive();
-        return ctx;
-      });
+      return ctx.resume();
     }
-    startKeepAlive();
-    return Promise.resolve(ctx);
+    return Promise.resolve();
   }
   
   function loadBeepBuffer() {
@@ -160,8 +128,12 @@ document.addEventListener("DOMContentLoaded", () => {
       
       ensureAudioContextReady().then(() => {
         if (beepArrayBuffer) {
-          loadBeepBuffer();
+          loadBeepBuffer().catch(() => {});
         }
+        const source = ctx.createBufferSource();
+        source.buffer = ctx.createBuffer(1, 1, 22050);
+        source.connect(ctx.destination);
+        source.start(0);
       });
     } else {
       ensureAudioContextReady();
@@ -172,39 +144,47 @@ document.addEventListener("DOMContentLoaded", () => {
   function beepStereo() {
     if (!audioUnlocked) {
       unlockAudio();
-      setTimeout(() => beepStereo(), 100);
-      return;
-    }
-    
-    if (!beepArrayBuffer) {
-      setTimeout(() => beepStereo(), 100);
+      setTimeout(() => beepStereo(), 150);
       return;
     }
     
     const ctx = getAudioContext();
     
-    ensureAudioContextReady().then(() => {
-      return loadBeepBuffer();
-    }).then(() => {
-      if (ctx.state === 'running' && beepBuffer) {
-        beepSide *= -1;
-        
-        const source = ctx.createBufferSource();
-        source.buffer = beepBuffer;
-        
-        const panner = ctx.createStereoPanner();
-        panner.pan.value = beepSide;
-        
-        source.connect(panner);
-        panner.connect(ctx.destination);
-        
-        source.start(0);
-      } else {
-        setTimeout(() => beepStereo(), 50);
+    if (ctx.state === 'suspended') {
+      ctx.resume().then(() => {
+        playBeepSound();
+      }).catch(() => {
+        playBeepSound();
+      });
+    } else {
+      playBeepSound();
+    }
+    
+    function playBeepSound() {
+      if (!beepArrayBuffer) {
+        setTimeout(() => beepStereo(), 100);
+        return;
       }
-    }).catch(() => {
-      setTimeout(() => beepStereo(), 100);
-    });
+      
+      loadBeepBuffer().then(() => {
+        if (ctx.state === 'running' && beepBuffer) {
+          beepSide *= -1;
+          
+          const source = ctx.createBufferSource();
+          source.buffer = beepBuffer;
+          
+          const panner = ctx.createStereoPanner();
+          panner.pan.value = beepSide;
+          
+          source.connect(panner);
+          panner.connect(ctx.destination);
+          
+          source.start(0);
+        }
+      }).catch(() => {
+        setTimeout(() => beepStereo(), 100);
+      });
+    }
   }
   
   speed.setAttribute("step", speedProps.step);

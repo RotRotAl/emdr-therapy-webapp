@@ -87,27 +87,36 @@ document.addEventListener("DOMContentLoaded", () => {
     return audioCtx;
   }
   
+  function ensureAudioContextReady() {
+    const ctx = getAudioContext();
+    if (ctx.state === 'suspended') {
+      return ctx.resume();
+    }
+    return Promise.resolve();
+  }
+  
   fetch("beep.mp3")
     .then(r => r.arrayBuffer())
     .then(arrayBuffer => {
       const ctx = getAudioContext();
       return ctx.decodeAudioData(arrayBuffer);
     })
-    .then(decoded => beepBuffer = decoded);
+    .then(decoded => beepBuffer = decoded)
+    .catch(err => console.error('Failed to load beep sound:', err));
   
   function unlockAudio() {
     const ctx = getAudioContext();
     
     if (!audioUnlocked) {
       audioUnlocked = true;
-      const source = ctx.createBufferSource();
-      source.buffer = ctx.createBuffer(1, 1, 22050);
-      source.connect(ctx.destination);
-      source.start(0);
-    }
-    
-    if (ctx.state === 'suspended') {
-      ctx.resume();
+      ensureAudioContextReady().then(() => {
+        const source = ctx.createBufferSource();
+        source.buffer = ctx.createBuffer(1, 1, 22050);
+        source.connect(ctx.destination);
+        source.start(0);
+      });
+    } else {
+      ensureAudioContextReady();
     }
   }
   
@@ -117,21 +126,20 @@ document.addEventListener("DOMContentLoaded", () => {
 
     const ctx = getAudioContext();
     
-    if (!audioUnlocked) {
-      unlockAudio();
-    }
-    
-    if (ctx.state === 'suspended') {
-      ctx.resume().then(() => {
+    ensureAudioContextReady().then(() => {
+      if (ctx.state === 'running' || ctx.state === 'interrupted') {
         playBeep(ctx);
-      });
-      return;
-    }
-
-    playBeep(ctx);
+      }
+    }).catch(() => {
+      if (ctx.state === 'running' || ctx.state === 'interrupted') {
+        playBeep(ctx);
+      }
+    });
   }
   
   function playBeep(ctx) {
+    if (!beepBuffer) return;
+    
     beepSide *= -1;
 
     const panner = ctx.createStereoPanner();

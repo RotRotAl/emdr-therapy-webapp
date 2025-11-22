@@ -78,90 +78,103 @@ document.addEventListener("DOMContentLoaded", () => {
   const canvas = document.getElementById("canvas");
   let audioCtx = null;
   let beepBuffer = null;
-  let keepAliveOsc = null;
-  let keepAliveGain = null;
   let audioInitialized = false;
-  
-  function initAudioContext() {
-    if (audioInitialized) return;
-    
-    audioCtx = new (window.AudioContext || window.webkitAudioContext)();
-    
-    keepAliveGain = audioCtx.createGain();
-    keepAliveGain.gain.value = 0.000001;
-    keepAliveGain.connect(audioCtx.destination);
-    
-    keepAliveOsc = audioCtx.createOscillator();
-    keepAliveOsc.frequency.value = 1;
-    keepAliveOsc.type = 'sine';
-    keepAliveOsc.connect(keepAliveGain);
-    keepAliveOsc.start(0);
-    
-    audioCtx.addEventListener('statechange', () => {
-      if (audioCtx.state === 'suspended' && audioInitialized) {
-        audioCtx.resume();
-      }
-    });
-    
-    fetch("beep.mp3")
-      .then(r => r.arrayBuffer())
-      .then(arrayBuffer => audioCtx.decodeAudioData(arrayBuffer))
-      .then(decoded => {
-        beepBuffer = decoded;
-      })
-      .catch(() => {
-        fetch("beep.wav")
-          .then(r => r.arrayBuffer())
-          .then(arrayBuffer => audioCtx.decodeAudioData(arrayBuffer))
-          .then(decoded => {
-            beepBuffer = decoded;
-          })
-          .catch(() => {});
-      });
-    
-    audioInitialized = true;
-  }
+  let audioUnlocked = false;
   
   function unlockAudio() {
-    if (!audioInitialized) {
-      initAudioContext();
-    }
+    if (audioUnlocked) return;
+    audioUnlocked = true;
     
-    if (audioCtx.state === 'suspended') {
-      audioCtx.resume();
+    beepSound.volume = 0.01;
+    beepSound.play().then(() => {
+      beepSound.pause();
+      beepSound.currentTime = 0;
+      beepSound.volume = 1.0;
+      initStereo();
+    }).catch(() => {
+      initStereo();
+    });
+  }
+  
+  function initStereo() {
+    if (audioInitialized) return;
+    
+    try {
+      audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+      
+      if (audioCtx.state === 'suspended') {
+        audioCtx.resume();
+      }
+      
+      const keepAliveGain = audioCtx.createGain();
+      keepAliveGain.gain.value = 0.00001;
+      keepAliveGain.connect(audioCtx.destination);
+      
+      const keepAliveOsc = audioCtx.createOscillator();
+      keepAliveOsc.frequency.value = 1;
+      keepAliveOsc.connect(keepAliveGain);
+      keepAliveOsc.start(0);
+      
+      fetch("beep.mp3")
+        .then(r => r.arrayBuffer())
+        .then(arrayBuffer => audioCtx.decodeAudioData(arrayBuffer))
+        .then(decoded => {
+          beepBuffer = decoded;
+          audioInitialized = true;
+        })
+        .catch(() => {
+          fetch("beep.wav")
+            .then(r => r.arrayBuffer())
+            .then(arrayBuffer => audioCtx.decodeAudioData(arrayBuffer))
+            .then(decoded => {
+              beepBuffer = decoded;
+              audioInitialized = true;
+            })
+            .catch(() => {});
+        });
+    } catch (e) {
+      audioInitialized = false;
     }
   }
   
   let beepSide = 1;
   function beepStereo() {
-    if (!audioInitialized || !beepBuffer) return;
-    
-    if (audioCtx.state === 'suspended') {
-      audioCtx.resume().then(() => {
-        playBeep();
-      });
+    if (!audioUnlocked) {
+      unlockAudio();
+      setTimeout(() => beepStereo(), 200);
       return;
     }
     
-    playBeep();
+    if (audioInitialized && beepBuffer) {
+      playWithStereo();
+    } else {
+      beepSound.currentTime = 0;
+      beepSound.play().catch(() => {});
+    }
     
-    function playBeep() {
-      beepSide *= -1;
+    function playWithStereo() {
+      if (audioCtx.state === 'suspended') {
+        audioCtx.resume().then(() => {
+          playBeep();
+        });
+        return;
+      }
+      playBeep();
       
-      const source = audioCtx.createBufferSource();
-      source.buffer = beepBuffer;
-      
-      const panner = audioCtx.createStereoPanner();
-      panner.pan.value = beepSide;
-      
-      const gain = audioCtx.createGain();
-      gain.gain.value = 1.0;
-      
-      source.connect(panner);
-      panner.connect(gain);
-      gain.connect(audioCtx.destination);
-      
-      source.start(0);
+      function playBeep() {
+        beepSide *= -1;
+        
+        const source = audioCtx.createBufferSource();
+        source.buffer = beepBuffer;
+        
+        const panner = audioCtx.createStereoPanner();
+        panner.pan.value = beepSide;
+        
+        source.connect(panner);
+        panner.connect(audioCtx.destination);
+        
+        source.start(0);
+      }
     }
   }
   

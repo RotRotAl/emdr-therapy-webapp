@@ -78,8 +78,6 @@ document.addEventListener("DOMContentLoaded", () => {
   const canvas = document.getElementById("canvas");
   let audioCtx = null;
   let audioUnlocked = false;
-  let mediaSource = null;
-  let panner = null;
   
   function getAudioContext() {
     if (!audioCtx) {
@@ -96,27 +94,11 @@ document.addEventListener("DOMContentLoaded", () => {
     return Promise.resolve();
   }
   
-  function setupAudioSource() {
-    if (mediaSource) return true;
-    
-    const ctx = getAudioContext();
-    try {
-      mediaSource = ctx.createMediaElementSource(beepSound);
-      panner = ctx.createStereoPanner();
-      mediaSource.connect(panner);
-      panner.connect(ctx.destination);
-      return true;
-    } catch (e) {
-      return false;
-    }
-  }
-  
   function unlockAudio() {
     const ctx = getAudioContext();
     
     if (!audioUnlocked) {
       audioUnlocked = true;
-      setupAudioSource();
       
       ensureAudioContextReady().then(() => {
         if (ctx.state === 'running') {
@@ -124,6 +106,10 @@ document.addEventListener("DOMContentLoaded", () => {
           source.buffer = ctx.createBuffer(1, 1, 22050);
           source.connect(ctx.destination);
           source.start(0);
+          
+          setupStereoAudio();
+          if (leftAudio) leftAudio.load();
+          if (rightAudio) rightAudio.load();
         }
       });
     } else {
@@ -132,27 +118,88 @@ document.addEventListener("DOMContentLoaded", () => {
   }
   
   let beepSide = 1;
-  function beepStereo() {
+  let leftAudio = null;
+  let rightAudio = null;
+  let leftSource = null;
+  let rightSource = null;
+  let leftPanner = null;
+  let rightPanner = null;
+  
+  function setupStereoAudio() {
+    if (leftAudio && rightAudio) return;
+    
+    const sources = beepSound.querySelectorAll('source');
+    
+    leftAudio = document.createElement('audio');
+    rightAudio = document.createElement('audio');
+    
+    sources.forEach(src => {
+      const leftSrc = document.createElement('source');
+      leftSrc.src = src.src;
+      leftSrc.type = src.type;
+      leftAudio.appendChild(leftSrc);
+      
+      const rightSrc = document.createElement('source');
+      rightSrc.src = src.src;
+      rightSrc.type = src.type;
+      rightAudio.appendChild(rightSrc);
+    });
+    
+    leftAudio.preload = 'auto';
+    rightAudio.preload = 'auto';
+    
     const ctx = getAudioContext();
     
+    try {
+      leftSource = ctx.createMediaElementSource(leftAudio);
+      leftPanner = ctx.createStereoPanner();
+      leftPanner.pan.value = -1;
+      leftSource.connect(leftPanner);
+      leftPanner.connect(ctx.destination);
+      
+      rightSource = ctx.createMediaElementSource(rightAudio);
+      rightPanner = ctx.createStereoPanner();
+      rightPanner.pan.value = 1;
+      rightSource.connect(rightPanner);
+      rightPanner.connect(ctx.destination);
+    } catch (e) {}
+  }
+  
+  function beepStereo() {
     if (!audioUnlocked) {
       unlockAudio();
       setTimeout(() => beepStereo(), 100);
       return;
     }
     
-    if (!setupAudioSource()) {
-      setTimeout(() => beepStereo(), 50);
-      return;
-    }
+    const ctx = getAudioContext();
     
     ensureAudioContextReady().then(() => {
-      if (ctx.state === 'running' && panner) {
+      if (ctx.state === 'running') {
         beepSide *= -1;
-        panner.pan.value = beepSide;
         
-        beepSound.currentTime = 0;
-        beepSound.play().catch(() => {});
+        setupStereoAudio();
+        
+        const audioToPlay = beepSide > 0 ? rightAudio : leftAudio;
+        
+        if (audioToPlay) {
+          const playBeep = () => {
+            audioToPlay.currentTime = 0;
+            const playPromise = audioToPlay.play();
+            if (playPromise !== undefined) {
+              playPromise.catch(() => {});
+            }
+          };
+          
+          if (audioToPlay.readyState >= 2) {
+            playBeep();
+          } else {
+            audioToPlay.addEventListener('canplaythrough', playBeep, { once: true });
+            if (audioToPlay.readyState === 0) {
+              audioToPlay.load();
+            }
+          }
+        }
       }
     });
   }

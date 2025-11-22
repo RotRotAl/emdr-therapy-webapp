@@ -77,114 +77,42 @@ document.addEventListener("DOMContentLoaded", () => {
   const colorChanging = document.getElementById("color-changing");
   const canvas = document.getElementById("canvas");
   let audioCtx = null;
-  let audioUnlocked = false;
-  let beepBuffer = null;
-  let beepArrayBuffer = null;
+  let mediaSource = null;
+  let panner = null;
+  let audioSetup = false;
   
-  function getAudioContext() {
-    if (!audioCtx) {
-      audioCtx = new (window.AudioContext || window.webkitAudioContext)();
-    }
-    return audioCtx;
-  }
-  
-  function ensureAudioContextReady() {
-    const ctx = getAudioContext();
-    if (ctx.state === 'suspended') {
-      return ctx.resume();
-    }
-    return Promise.resolve();
-  }
-  
-  function loadBeepBuffer() {
-    if (beepBuffer) return Promise.resolve(beepBuffer);
-    if (!beepArrayBuffer) return Promise.reject('Beep not loaded');
+  function setupStereoAudio() {
+    if (audioSetup) return;
     
-    const ctx = getAudioContext();
-    return ctx.decodeAudioData(beepArrayBuffer.slice(0)).then(decoded => {
-      beepBuffer = decoded;
-      return beepBuffer;
-    });
-  }
-  
-  fetch("beep.mp3")
-    .then(r => r.arrayBuffer())
-    .then(arrayBuffer => {
-      beepArrayBuffer = arrayBuffer;
-    })
-    .catch(() => {
-      fetch("beep.wav")
-        .then(r => r.arrayBuffer())
-        .then(arrayBuffer => {
-          beepArrayBuffer = arrayBuffer;
-        })
-        .catch(() => {});
-    });
-  
-  function unlockAudio() {
-    if (!audioUnlocked) {
-      audioUnlocked = true;
-      const ctx = getAudioContext();
-      
-      ensureAudioContextReady().then(() => {
-        if (beepArrayBuffer) {
-          loadBeepBuffer().catch(() => {});
-        }
-        const source = ctx.createBufferSource();
-        source.buffer = ctx.createBuffer(1, 1, 22050);
-        source.connect(ctx.destination);
-        source.start(0);
-      });
-    } else {
-      ensureAudioContextReady();
+    try {
+      audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+      mediaSource = audioCtx.createMediaElementSource(beepSound);
+      panner = audioCtx.createStereoPanner();
+      mediaSource.connect(panner);
+      panner.connect(audioCtx.destination);
+      audioSetup = true;
+    } catch (e) {
+      audioSetup = false;
     }
   }
   
   let beepSide = 1;
   function beepStereo() {
-    if (!audioUnlocked) {
-      unlockAudio();
-      setTimeout(() => beepStereo(), 150);
-      return;
+    if (!audioSetup) {
+      setupStereoAudio();
     }
     
-    const ctx = getAudioContext();
-    
-    if (ctx.state === 'suspended') {
-      ctx.resume().then(() => {
-        playBeepSound();
-      }).catch(() => {
-        playBeepSound();
-      });
-    } else {
-      playBeepSound();
+    if (audioCtx && audioCtx.state === 'suspended') {
+      audioCtx.resume();
     }
     
-    function playBeepSound() {
-      if (!beepArrayBuffer) {
-        setTimeout(() => beepStereo(), 100);
-        return;
-      }
-      
-      loadBeepBuffer().then(() => {
-        if (ctx.state === 'running' && beepBuffer) {
-          beepSide *= -1;
-          
-          const source = ctx.createBufferSource();
-          source.buffer = beepBuffer;
-          
-          const panner = ctx.createStereoPanner();
-          panner.pan.value = beepSide;
-          
-          source.connect(panner);
-          panner.connect(ctx.destination);
-          
-          source.start(0);
-        }
-      }).catch(() => {
-        setTimeout(() => beepStereo(), 100);
-      });
+    if (panner) {
+      beepSide *= -1;
+      panner.pan.value = beepSide;
     }
+    
+    beepSound.currentTime = 0;
+    beepSound.play().catch(() => {});
   }
   
   speed.setAttribute("step", speedProps.step);

@@ -86,122 +86,92 @@ document.addEventListener("DOMContentLoaded", () => {
     return audioCtx;
   }
   
-  function ensureAudioContextReady() {
-    const ctx = getAudioContext();
-    if (ctx.state === 'suspended') {
-      return ctx.resume();
-    }
-    return Promise.resolve();
-  }
-  
   function unlockAudio() {
-    const ctx = getAudioContext();
-    
     if (!audioUnlocked) {
       audioUnlocked = true;
+      const ctx = getAudioContext();
       
-      ensureAudioContextReady().then(() => {
-        if (ctx.state === 'running') {
-          const source = ctx.createBufferSource();
-          source.buffer = ctx.createBuffer(1, 1, 22050);
-          source.connect(ctx.destination);
-          source.start(0);
-          
-          setupStereoAudio();
-          if (leftAudio) leftAudio.load();
-          if (rightAudio) rightAudio.load();
-        }
-      });
+      if (ctx.state === 'suspended') {
+        ctx.resume();
+      }
+      
+      beepSound.volume = 0.01;
+      beepSound.play().then(() => {
+        beepSound.pause();
+        beepSound.currentTime = 0;
+        beepSound.volume = 1.0;
+      }).catch(() => {});
     } else {
-      ensureAudioContextReady();
+      const ctx = getAudioContext();
+      if (ctx.state === 'suspended') {
+        ctx.resume();
+      }
     }
   }
   
   let beepSide = 1;
-  let leftAudio = null;
-  let rightAudio = null;
-  let leftSource = null;
-  let rightSource = null;
-  let leftPanner = null;
-  let rightPanner = null;
-  
-  function setupStereoAudio() {
-    if (leftAudio && rightAudio) return;
-    
-    const sources = beepSound.querySelectorAll('source');
-    
-    leftAudio = document.createElement('audio');
-    rightAudio = document.createElement('audio');
-    
-    sources.forEach(src => {
-      const leftSrc = document.createElement('source');
-      leftSrc.src = src.src;
-      leftSrc.type = src.type;
-      leftAudio.appendChild(leftSrc);
-      
-      const rightSrc = document.createElement('source');
-      rightSrc.src = src.src;
-      rightSrc.type = src.type;
-      rightAudio.appendChild(rightSrc);
-    });
-    
-    leftAudio.preload = 'auto';
-    rightAudio.preload = 'auto';
-    
-    const ctx = getAudioContext();
-    
-    try {
-      leftSource = ctx.createMediaElementSource(leftAudio);
-      leftPanner = ctx.createStereoPanner();
-      leftPanner.pan.value = -1;
-      leftSource.connect(leftPanner);
-      leftPanner.connect(ctx.destination);
-      
-      rightSource = ctx.createMediaElementSource(rightAudio);
-      rightPanner = ctx.createStereoPanner();
-      rightPanner.pan.value = 1;
-      rightSource.connect(rightPanner);
-      rightPanner.connect(ctx.destination);
-    } catch (e) {}
-  }
-  
   function beepStereo() {
     if (!audioUnlocked) {
       unlockAudio();
-      setTimeout(() => beepStereo(), 100);
+      setTimeout(() => beepStereo(), 50);
       return;
     }
     
+    beepSide *= -1;
+    
+    const audio = document.createElement('audio');
+    const sources = beepSound.querySelectorAll('source');
+    sources.forEach(src => {
+      const newSrc = document.createElement('source');
+      newSrc.src = src.src;
+      newSrc.type = src.type;
+      audio.appendChild(newSrc);
+    });
+    audio.preload = 'auto';
+    audio.volume = 1.0;
+    
     const ctx = getAudioContext();
     
-    ensureAudioContextReady().then(() => {
-      if (ctx.state === 'running') {
-        beepSide *= -1;
+    if (ctx.state === 'suspended') {
+      ctx.resume();
+    }
+    
+    const setupAndPlay = () => {
+      try {
+        const source = ctx.createMediaElementSource(audio);
+        const panner = ctx.createStereoPanner();
+        panner.pan.value = beepSide;
+        source.connect(panner);
+        panner.connect(ctx.destination);
         
-        setupStereoAudio();
-        
-        const audioToPlay = beepSide > 0 ? rightAudio : leftAudio;
-        
-        if (audioToPlay) {
-          const playBeep = () => {
-            audioToPlay.currentTime = 0;
-            const playPromise = audioToPlay.play();
-            if (playPromise !== undefined) {
-              playPromise.catch(() => {});
-            }
-          };
-          
-          if (audioToPlay.readyState >= 2) {
-            playBeep();
-          } else {
-            audioToPlay.addEventListener('canplaythrough', playBeep, { once: true });
-            if (audioToPlay.readyState === 0) {
-              audioToPlay.load();
-            }
-          }
-        }
+        audio.addEventListener('ended', () => {
+          try {
+            source.disconnect();
+            panner.disconnect();
+            audio.remove();
+          } catch (e) {}
+        }, { once: true });
+      } catch (e) {
+        audio.addEventListener('ended', () => {
+          audio.remove();
+        }, { once: true });
       }
-    });
+      
+      audio.currentTime = 0;
+      const playPromise = audio.play();
+      if (playPromise !== undefined) {
+        playPromise.catch(() => {
+          audio.remove();
+        });
+      }
+    };
+    
+    if (audio.readyState >= 2) {
+      setupAndPlay();
+    } else {
+      audio.addEventListener('canplay', setupAndPlay, { once: true });
+      audio.load();
+    }
   }
 
   speed.setAttribute("step", speedProps.step);

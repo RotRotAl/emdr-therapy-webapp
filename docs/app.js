@@ -77,49 +77,92 @@ document.addEventListener("DOMContentLoaded", () => {
   const colorChanging = document.getElementById("color-changing");
   const canvas = document.getElementById("canvas");
   let audioCtx = null;
-  let mediaSource = null;
-  let panner = null;
-  let audioSetup = false;
+  let beepBuffer = null;
+  let keepAliveOsc = null;
+  let keepAliveGain = null;
+  let audioInitialized = false;
   
-  function setupStereoAudio() {
-    if (audioSetup) return;
+  function initAudioContext() {
+    if (audioInitialized) return;
     
-    try {
-      audioCtx = new (window.AudioContext || window.webkitAudioContext)();
-      if (audioCtx.state === 'suspended') {
+    audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+    
+    keepAliveGain = audioCtx.createGain();
+    keepAliveGain.gain.value = 0.000001;
+    keepAliveGain.connect(audioCtx.destination);
+    
+    keepAliveOsc = audioCtx.createOscillator();
+    keepAliveOsc.frequency.value = 1;
+    keepAliveOsc.type = 'sine';
+    keepAliveOsc.connect(keepAliveGain);
+    keepAliveOsc.start(0);
+    
+    audioCtx.addEventListener('statechange', () => {
+      if (audioCtx.state === 'suspended' && audioInitialized) {
         audioCtx.resume();
       }
-      mediaSource = audioCtx.createMediaElementSource(beepSound);
-      panner = audioCtx.createStereoPanner();
-      mediaSource.connect(panner);
-      panner.connect(audioCtx.destination);
-      audioSetup = true;
-    } catch (e) {
-      audioSetup = false;
-    }
+    });
+    
+    fetch("beep.mp3")
+      .then(r => r.arrayBuffer())
+      .then(arrayBuffer => audioCtx.decodeAudioData(arrayBuffer))
+      .then(decoded => {
+        beepBuffer = decoded;
+      })
+      .catch(() => {
+        fetch("beep.wav")
+          .then(r => r.arrayBuffer())
+          .then(arrayBuffer => audioCtx.decodeAudioData(arrayBuffer))
+          .then(decoded => {
+            beepBuffer = decoded;
+          })
+          .catch(() => {});
+      });
+    
+    audioInitialized = true;
   }
   
   function unlockAudio() {
-    setupStereoAudio();
-    beepSound.play().then(() => {
-      beepSound.pause();
-      beepSound.currentTime = 0;
-    }).catch(() => {});
+    if (!audioInitialized) {
+      initAudioContext();
+    }
+    
+    if (audioCtx.state === 'suspended') {
+      audioCtx.resume();
+    }
   }
   
   let beepSide = 1;
   function beepStereo() {
-    if (audioCtx && audioCtx.state === 'suspended') {
-      audioCtx.resume();
+    if (!audioInitialized || !beepBuffer) return;
+    
+    if (audioCtx.state === 'suspended') {
+      audioCtx.resume().then(() => {
+        playBeep();
+      });
+      return;
     }
     
-    if (panner) {
+    playBeep();
+    
+    function playBeep() {
       beepSide *= -1;
+      
+      const source = audioCtx.createBufferSource();
+      source.buffer = beepBuffer;
+      
+      const panner = audioCtx.createStereoPanner();
       panner.pan.value = beepSide;
+      
+      const gain = audioCtx.createGain();
+      gain.gain.value = 1.0;
+      
+      source.connect(panner);
+      panner.connect(gain);
+      gain.connect(audioCtx.destination);
+      
+      source.start(0);
     }
-    
-    beepSound.currentTime = 0;
-    beepSound.play().catch(() => {});
   }
   
   speed.setAttribute("step", speedProps.step);

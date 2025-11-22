@@ -95,6 +95,8 @@ document.addEventListener("DOMContentLoaded", () => {
         ctx.resume();
       }
       
+      initAudioPool();
+      
       beepSound.volume = 0.01;
       beepSound.play().then(() => {
         beepSound.pause();
@@ -110,15 +112,10 @@ document.addEventListener("DOMContentLoaded", () => {
   }
   
   let beepSide = 1;
-  function beepStereo() {
-    if (!audioUnlocked) {
-      unlockAudio();
-      setTimeout(() => beepStereo(), 50);
-      return;
-    }
-    
-    beepSide *= -1;
-    
+  let audioPool = [];
+  const POOL_SIZE = 6;
+  
+  function createPreloadedAudio() {
     const audio = document.createElement('audio');
     const sources = beepSound.querySelectorAll('source');
     sources.forEach(src => {
@@ -129,51 +126,95 @@ document.addEventListener("DOMContentLoaded", () => {
     });
     audio.preload = 'auto';
     audio.volume = 1.0;
+    audio.load();
+    return audio;
+  }
+  
+  function initAudioPool() {
+    for (let i = 0; i < POOL_SIZE; i++) {
+      audioPool.push(createPreloadedAudio());
+    }
+  }
+  
+  function getReadyAudio() {
+    for (let i = 0; i < audioPool.length; i++) {
+      const audio = audioPool[i];
+      if (audio.paused && (audio.readyState >= 2 || audio.readyState === 1)) {
+        return audio;
+      }
+    }
+    const newAudio = createPreloadedAudio();
+    audioPool.push(newAudio);
+    return newAudio;
+  }
+  
+  function beepStereo() {
+    if (!audioUnlocked) {
+      unlockAudio();
+      setTimeout(() => beepStereo(), 100);
+      return;
+    }
     
     const ctx = getAudioContext();
     
     if (ctx.state === 'suspended') {
-      ctx.resume();
+      ctx.resume().then(() => {
+        playBeep();
+      }).catch(() => {
+        playBeep();
+      });
+    } else {
+      playBeep();
     }
     
-    const setupAndPlay = () => {
-      try {
-        const source = ctx.createMediaElementSource(audio);
-        const panner = ctx.createStereoPanner();
-        panner.pan.value = beepSide;
-        source.connect(panner);
-        panner.connect(ctx.destination);
-        
-        audio.addEventListener('ended', () => {
-          try {
-            source.disconnect();
-            panner.disconnect();
-            audio.remove();
-          } catch (e) {}
-        }, { once: true });
-      } catch (e) {
-        audio.addEventListener('ended', () => {
-          audio.remove();
-        }, { once: true });
-      }
+    function playBeep() {
+      beepSide *= -1;
       
-      audio.currentTime = 0;
-      const playPromise = audio.play();
-      if (playPromise !== undefined) {
-        playPromise.catch(() => {
-          audio.remove();
-        });
+      const audio = getReadyAudio();
+      
+      const tryPlay = () => {
+        if (audio.readyState === 0) {
+          audio.load();
+          setTimeout(() => tryPlay(), 50);
+          return;
+        }
+        
+        try {
+          const source = ctx.createMediaElementSource(audio);
+          const panner = ctx.createStereoPanner();
+          panner.pan.value = beepSide;
+          source.connect(panner);
+          panner.connect(ctx.destination);
+          
+          audio.addEventListener('ended', () => {
+            try {
+              source.disconnect();
+              panner.disconnect();
+            } catch (e) {}
+            audio.currentTime = 0;
+          }, { once: true });
+        } catch (e) {}
+        
+        audio.currentTime = 0;
+        const playPromise = audio.play();
+        if (playPromise !== undefined) {
+          playPromise.catch(() => {
+            audio.currentTime = 0;
+          });
+        }
+      };
+      
+      if (audio.readyState >= 2) {
+        tryPlay();
+      } else {
+        audio.addEventListener('canplaythrough', tryPlay, { once: true });
+        if (audio.readyState === 0) {
+          audio.load();
+        }
       }
-    };
-    
-    if (audio.readyState >= 2) {
-      setupAndPlay();
-    } else {
-      audio.addEventListener('canplay', setupAndPlay, { once: true });
-      audio.load();
     }
   }
-
+  
   speed.setAttribute("step", speedProps.step);
   speed.setAttribute("max", speedProps.max);
   speed.setAttribute("min", speedProps.min);

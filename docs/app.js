@@ -80,20 +80,52 @@ document.addEventListener("DOMContentLoaded", () => {
   let audioUnlocked = false;
   let beepBuffer = null;
   let beepArrayBuffer = null;
+  let keepAliveOscillator = null;
+  let keepAliveGain = null;
   
   function getAudioContext() {
     if (!audioCtx) {
       audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+      
+      audioCtx.addEventListener('statechange', () => {
+        if (audioCtx.state === 'suspended' && audioUnlocked) {
+          audioCtx.resume().then(() => {
+            if (!keepAliveOscillator) {
+              startKeepAlive();
+            }
+          });
+        }
+      });
     }
     return audioCtx;
+  }
+  
+  function startKeepAlive() {
+    if (keepAliveOscillator) return;
+    
+    const ctx = getAudioContext();
+    
+    keepAliveGain = ctx.createGain();
+    keepAliveGain.gain.value = 0.00001;
+    keepAliveGain.connect(ctx.destination);
+    
+    keepAliveOscillator = ctx.createOscillator();
+    keepAliveOscillator.frequency.value = 1;
+    keepAliveOscillator.type = 'sine';
+    keepAliveOscillator.connect(keepAliveGain);
+    keepAliveOscillator.start(0);
   }
   
   function ensureAudioContextReady() {
     const ctx = getAudioContext();
     if (ctx.state === 'suspended') {
-      return ctx.resume();
+      return ctx.resume().then(() => {
+        startKeepAlive();
+        return ctx;
+      });
     }
-    return Promise.resolve();
+    startKeepAlive();
+    return Promise.resolve(ctx);
   }
   
   function loadBeepBuffer() {
@@ -127,11 +159,8 @@ document.addEventListener("DOMContentLoaded", () => {
       const ctx = getAudioContext();
       
       ensureAudioContextReady().then(() => {
-        if (ctx.state === 'running') {
-          const source = ctx.createBufferSource();
-          source.buffer = ctx.createBuffer(1, 1, 22050);
-          source.connect(ctx.destination);
-          source.start(0);
+        if (beepArrayBuffer) {
+          loadBeepBuffer();
         }
       });
     } else {
@@ -170,8 +199,12 @@ document.addEventListener("DOMContentLoaded", () => {
         panner.connect(ctx.destination);
         
         source.start(0);
+      } else {
+        setTimeout(() => beepStereo(), 50);
       }
-    }).catch(() => {});
+    }).catch(() => {
+      setTimeout(() => beepStereo(), 100);
+    });
   }
   
   speed.setAttribute("step", speedProps.step);

@@ -78,8 +78,8 @@ document.addEventListener("DOMContentLoaded", () => {
   const canvas = document.getElementById("canvas");
   let audioCtx = null;
   let audioUnlocked = false;
-  let beepBuffer = null;
-  let beepArrayBuffer = null;
+  let mediaSource = null;
+  let panner = null;
   
   function getAudioContext() {
     if (!audioCtx) {
@@ -96,39 +96,35 @@ document.addEventListener("DOMContentLoaded", () => {
     return Promise.resolve();
   }
   
-  function loadBeepBuffer() {
-    if (beepBuffer) return Promise.resolve(beepBuffer);
-    if (!beepArrayBuffer) return Promise.reject('Beep not loaded');
+  function setupAudioSource() {
+    if (mediaSource) return true;
     
     const ctx = getAudioContext();
-    return ctx.decodeAudioData(beepArrayBuffer.slice(0)).then(decoded => {
-      beepBuffer = decoded;
-      return beepBuffer;
-    });
+    try {
+      mediaSource = ctx.createMediaElementSource(beepSound);
+      panner = ctx.createStereoPanner();
+      mediaSource.connect(panner);
+      panner.connect(ctx.destination);
+      return true;
+    } catch (e) {
+      return false;
+    }
   }
-  
-  fetch("beep.mp3")
-    .then(r => r.arrayBuffer())
-    .then(arrayBuffer => {
-      beepArrayBuffer = arrayBuffer;
-    })
-    .catch(err => console.error('Failed to load beep sound:', err));
   
   function unlockAudio() {
     const ctx = getAudioContext();
     
     if (!audioUnlocked) {
       audioUnlocked = true;
+      setupAudioSource();
       
       ensureAudioContextReady().then(() => {
-        loadBeepBuffer().then(() => {
-          if (ctx.state === 'running') {
-            const source = ctx.createBufferSource();
-            source.buffer = ctx.createBuffer(1, 1, 22050);
-            source.connect(ctx.destination);
-            source.start(0);
-          }
-        });
+        if (ctx.state === 'running') {
+          const source = ctx.createBufferSource();
+          source.buffer = ctx.createBuffer(1, 1, 22050);
+          source.connect(ctx.destination);
+          source.start(0);
+        }
       });
     } else {
       ensureAudioContextReady();
@@ -137,38 +133,28 @@ document.addEventListener("DOMContentLoaded", () => {
   
   let beepSide = 1;
   function beepStereo() {
-    if (!beepArrayBuffer) return;
-
     const ctx = getAudioContext();
     
     if (!audioUnlocked) {
       unlockAudio();
+      setTimeout(() => beepStereo(), 100);
+      return;
+    }
+    
+    if (!setupAudioSource()) {
+      setTimeout(() => beepStereo(), 50);
       return;
     }
     
     ensureAudioContextReady().then(() => {
-      return loadBeepBuffer();
-    }).then(() => {
-      if (ctx.state === 'running') {
-        playBeep(ctx);
+      if (ctx.state === 'running' && panner) {
+        beepSide *= -1;
+        panner.pan.value = beepSide;
+        
+        beepSound.currentTime = 0;
+        beepSound.play().catch(() => {});
       }
-    }).catch(() => {});
-  }
-  
-  function playBeep(ctx) {
-    if (!beepBuffer) return;
-    
-    beepSide *= -1;
-
-    const panner = ctx.createStereoPanner();
-    panner.pan.value = beepSide;
-
-    const source = ctx.createBufferSource();
-    source.buffer = beepBuffer;
-    source.connect(panner);
-    panner.connect(ctx.destination);
-
-    source.start();
+    });
   }
 
   speed.setAttribute("step", speedProps.step);

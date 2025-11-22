@@ -79,6 +79,7 @@ document.addEventListener("DOMContentLoaded", () => {
   let audioCtx = null;
   let audioUnlocked = false;
   let beepBuffer = null;
+  let beepArrayBuffer = null;
   
   function getAudioContext() {
     if (!audioCtx) {
@@ -95,13 +96,22 @@ document.addEventListener("DOMContentLoaded", () => {
     return Promise.resolve();
   }
   
+  function loadBeepBuffer() {
+    if (beepBuffer) return Promise.resolve(beepBuffer);
+    if (!beepArrayBuffer) return Promise.reject('Beep not loaded');
+    
+    const ctx = getAudioContext();
+    return ctx.decodeAudioData(beepArrayBuffer.slice(0)).then(decoded => {
+      beepBuffer = decoded;
+      return beepBuffer;
+    });
+  }
+  
   fetch("beep.mp3")
     .then(r => r.arrayBuffer())
     .then(arrayBuffer => {
-      const ctx = getAudioContext();
-      return ctx.decodeAudioData(arrayBuffer);
+      beepArrayBuffer = arrayBuffer;
     })
-    .then(decoded => beepBuffer = decoded)
     .catch(err => console.error('Failed to load beep sound:', err));
   
   function unlockAudio() {
@@ -109,11 +119,16 @@ document.addEventListener("DOMContentLoaded", () => {
     
     if (!audioUnlocked) {
       audioUnlocked = true;
+      
       ensureAudioContextReady().then(() => {
-        const source = ctx.createBufferSource();
-        source.buffer = ctx.createBuffer(1, 1, 22050);
-        source.connect(ctx.destination);
-        source.start(0);
+        loadBeepBuffer().then(() => {
+          if (ctx.state === 'running') {
+            const source = ctx.createBufferSource();
+            source.buffer = ctx.createBuffer(1, 1, 22050);
+            source.connect(ctx.destination);
+            source.start(0);
+          }
+        });
       });
     } else {
       ensureAudioContextReady();
@@ -122,19 +137,22 @@ document.addEventListener("DOMContentLoaded", () => {
   
   let beepSide = 1;
   function beepStereo() {
-    if (!beepBuffer) return;
+    if (!beepArrayBuffer) return;
 
     const ctx = getAudioContext();
     
+    if (!audioUnlocked) {
+      unlockAudio();
+      return;
+    }
+    
     ensureAudioContextReady().then(() => {
-      if (ctx.state === 'running' || ctx.state === 'interrupted') {
+      return loadBeepBuffer();
+    }).then(() => {
+      if (ctx.state === 'running') {
         playBeep(ctx);
       }
-    }).catch(() => {
-      if (ctx.state === 'running' || ctx.state === 'interrupted') {
-        playBeep(ctx);
-      }
-    });
+    }).catch(() => {});
   }
   
   function playBeep(ctx) {
